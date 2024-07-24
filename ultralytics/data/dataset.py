@@ -217,7 +217,7 @@ class YOLODataset(BaseDataset):
         normalized = label.pop("normalized")
 
         # NOTE: do NOT resample oriented boxes
-        segment_resamples = 100 if self.use_obb else 1000
+        segment_resamples = 1000
         if len(segments) > 0:
             # list[np.array(1000, 2)] * num_samples
             # (N, 1000, 2)

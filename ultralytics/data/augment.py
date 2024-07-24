@@ -679,7 +679,7 @@ class Mosaic(BaseMixTransform):
         """
         mosaic_labels = []
         s = self.imgsz
-        yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
+        yc, xc = s, s #(int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
         for i in range(4):
             labels_patch = labels if i == 0 else labels["mix_labels"][i - 1]
             # Load image
@@ -807,6 +807,7 @@ class Mosaic(BaseMixTransform):
         nh, nw = labels["img"].shape[:2]
         labels["instances"].convert_bbox(format="xyxy")
         labels["instances"].denormalize(nw, nh)
+        labels["instances"].clip(nw, nh)
         labels["instances"].add_padding(padw, padh)
         return labels
 
@@ -1135,7 +1136,7 @@ class RandomPerspective:
         """
         n, num = segments.shape[:2]
         if n == 0:
-            return [], segments
+            return [], segments, []
 
         xy = np.ones((n * num, 3), dtype=segments.dtype)
         segments = segments.reshape(-1, 2)
@@ -1143,10 +1144,14 @@ class RandomPerspective:
         xy = xy @ M.T  # transform
         xy = xy[:, :2] / xy[:, 2:3]
         segments = xy.reshape(n, -1, 2)
+        segments_conf = ((segments[..., 0] >= 0) & (segments[..., 0] < self.size[0]) & (segments[..., 1] >= 0) & (segments[..., 1] < self.size[1])).sum(axis=-1) != 0
+        cpts = (segments.min(axis=1) + segments.max(axis=1))/2
+        cpt_conf = (cpts[:, 0] >= 0) & (cpts[:, 0] < self.size[0]) & (cpts[:, 1] >= 0) & (cpts[:, 1] < self.size[1])
+        candidate_index = segments_conf & cpt_conf
         bboxes = np.stack([segment2box(xy, self.size[0], self.size[1]) for xy in segments], 0)
-        segments[..., 0] = segments[..., 0].clip(bboxes[:, 0:1], bboxes[:, 2:3])
-        segments[..., 1] = segments[..., 1].clip(bboxes[:, 1:2], bboxes[:, 3:4])
-        return bboxes, segments
+        # segments[..., 0] = segments[..., 0].clip(bboxes[:, 0:1], bboxes[:, 2:3])
+        # segments[..., 1] = segments[..., 1].clip(bboxes[:, 1:2], bboxes[:, 3:4])    
+        return bboxes, segments, candidate_index
 
     def apply_keypoints(self, keypoints, M):
         """
@@ -1182,6 +1187,22 @@ class RandomPerspective:
         visible[out_mask] = 0
         return np.concatenate([xy, visible], axis=-1).reshape(n, nkpt, 3)
 
+    def check_quadrant(self, xyxy, sampled_values):
+        assert len(xyxy) == len(sampled_values)
+        for i in range(len(xyxy)):
+            xmin, ymin, xmax, ymax = xyxy[i]
+            if (xmin <= 0 <= xmax) and (ymin <= 0 <= ymax):
+                sampled_values[i] = [0, 0]
+            elif (xmin <= 0 <= xmax) and (ymin <= self.size[1] <= ymax):
+                sampled_values[i] = [0, self.size[1]]
+            elif (xmin <= self.size[0] <= xmax) and (ymin <= 0 <= ymax):
+                sampled_values[i] = [self.size[0], 0]
+            elif (xmin <= self.size[0] <= xmax) and (ymin <= self.size[0] <= ymax):
+                sampled_values[i] = [self.size[0], self.size[1]]
+            else:
+                pass
+        return sampled_values
+    
     def __call__(self, labels):
         """
         Applies random perspective and affine transformations to an image and its associated labels.
@@ -1217,6 +1238,7 @@ class RandomPerspective:
             >>> result = transform(labels)
             >>> assert result['img'].shape[:2] == result['resized_shape']
         """
+        candidate_index = None
         if self.pre_transform and "mosaic_border" not in labels:
             labels = self.pre_transform(labels)
         labels.pop("ratio_pad", None)  # do not need ratio pad
@@ -1240,14 +1262,22 @@ class RandomPerspective:
         keypoints = instances.keypoints
         # Update bboxes if there are segments.
         if len(segments):
-            bboxes, segments = self.apply_segments(segments, M)
+            bboxes, segments, candidate_index = self.apply_segments(segments, M)
 
         if keypoints is not None:
             keypoints = self.apply_keypoints(keypoints, M)
         new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
         # Clip
+        tmp_segments = deepcopy(new_instances.segments)
+        min_max_points = np.concatenate([tmp_segments.min(axis=(1)), tmp_segments.max(axis=(1))], axis=-1)
         new_instances.clip(*self.size)
-
+        not_equal_indices = ~np.all(new_instances.segments == tmp_segments, axis=-1)
+        sampled_indices = (~not_equal_indices).argmax(axis=-1)
+        row_indices = np.arange(new_instances.segments.shape[0])[:, np.newaxis]
+        sampled_values = new_instances.segments[row_indices, sampled_indices[:, np.newaxis], :]
+        sampled_values = self.check_quadrant(min_max_points, sampled_values)
+        new_instances.segments = np.where(~not_equal_indices[:, :, np.newaxis], new_instances.segments, sampled_values)
+        
         # Filter instances
         instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
         # Make the bboxes have the same scale with new_bboxes
@@ -2046,9 +2076,9 @@ class Format:
                 labels["keypoints"][..., 0] /= w
                 labels["keypoints"][..., 1] /= h
         if self.return_obb:
-            labels["bboxes"] = (
-                xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
-            )
+            tmp_bboxes = xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
+            tmp_bboxes[:, 2:4] *= 1.02
+            labels["bboxes"] = (tmp_bboxes)
         # NOTE: need to normalize obb in xywhr format for width-height consistency
         if self.normalize:
             labels["bboxes"][:, [0, 2]] /= w
