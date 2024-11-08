@@ -50,6 +50,7 @@ class Bboxes:
         """Initializes the Bboxes class with bounding box data in a specified format."""
         assert format in _formats, f"Invalid bounding box format: {format}, format must be one of {_formats}"
         bboxes = bboxes[None, :] if bboxes.ndim == 1 else bboxes
+        bboxes = bboxes[:, :4]
         assert bboxes.ndim == 2
         assert bboxes.shape[1] == 4
         self.bboxes = bboxes
@@ -176,7 +177,7 @@ class Bboxes:
             length as the number of bounding boxes.
         """
         if isinstance(index, int):
-            return Bboxes(self.bboxes[index].reshape(1, -1))
+            return Bboxes(self.bboxes[index].view(1, -1))
         b = self.bboxes[index]
         assert b.ndim == 2, f"Indexing on Bboxes with {index} failed to return a matrix!"
         return Bboxes(b)
@@ -214,7 +215,7 @@ class Instances:
         This class does not perform input validation, and it assumes the inputs are well-formed.
     """
 
-    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format="xywh", normalized=True) -> None:
+    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format="xywh", normalized=True, weights=None) -> None:
         """
         Initialize the object with bounding boxes, segments, and keypoints.
 
@@ -229,7 +230,7 @@ class Instances:
         self.keypoints = keypoints
         self.normalized = normalized
         self.segments = segments
-
+        self.weights = weights
     def convert_bbox(self, format):
         """Convert bounding box format."""
         self._bboxes.convert(format=format)
@@ -291,7 +292,7 @@ class Instances:
         Args:
             index (int, slice, or np.ndarray): The index, slice, or boolean array to select
                                                the desired instances.
-
+weight
         Returns:
             Instances: A new Instances object containing the selected bounding boxes,
                        segments, and keypoints if present.
@@ -303,6 +304,7 @@ class Instances:
         segments = self.segments[index] if len(self.segments) else self.segments
         keypoints = self.keypoints[index] if self.keypoints is not None else None
         bboxes = self.bboxes[index]
+        weights = self.weights[index] 
         bbox_format = self._bboxes.format
         return Instances(
             bboxes=bboxes,
@@ -310,6 +312,7 @@ class Instances:
             keypoints=keypoints,
             bbox_format=bbox_format,
             normalized=self.normalized,
+            weights=weights
         )
 
     def flipud(self, h):
@@ -408,7 +411,8 @@ class Instances:
         cat_boxes = np.concatenate([ins.bboxes for ins in instances_list], axis=axis)
         cat_segments = np.concatenate([b.segments for b in instances_list], axis=axis)
         cat_keypoints = np.concatenate([b.keypoints for b in instances_list], axis=axis) if use_keypoint else None
-        return cls(cat_boxes, cat_segments, cat_keypoints, bbox_format, normalized)
+        cat_weights = np.concatenate([ins.weights for ins in instances_list], axis=axis)
+        return cls(cat_boxes, cat_segments, cat_keypoints, bbox_format, normalized, cat_weights)
 
     @property
     def bboxes(self):

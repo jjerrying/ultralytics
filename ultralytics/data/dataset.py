@@ -1,5 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
+import contextlib
 import json
 from collections import defaultdict
 from itertools import repeat
@@ -109,6 +110,7 @@ class YOLODataset(BaseDataset):
                             "shape": shape,
                             "cls": lb[:, 0:1],  # n, 1
                             "bboxes": lb[:, 1:],  # n, 4
+                            "weights": lb[:, -1:],  # n, 1
                             "segments": segments,
                             "keypoints": keypoint,
                             "normalized": True,
@@ -169,6 +171,7 @@ class YOLODataset(BaseDataset):
                 lb["segments"] = []
         if len_cls == 0:
             LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
+        
         return labels
 
     def build_transforms(self, hyp=None):
@@ -214,16 +217,16 @@ class YOLODataset(BaseDataset):
         keypoints = label.pop("keypoints", None)
         bbox_format = label.pop("bbox_format")
         normalized = label.pop("normalized")
-
+        weights = label.pop("weights")
         # NOTE: do NOT resample oriented boxes
-        segment_resamples = 1000
+        segment_resamples = 1000 if self.use_obb else 1000
         if len(segments) > 0:
             # list[np.array(1000, 2)] * num_samples
             # (N, 1000, 2)
             segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
         else:
             segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
-        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, weights=weights)
         return label
 
     @staticmethod
@@ -236,7 +239,7 @@ class YOLODataset(BaseDataset):
             value = values[i]
             if k == "img":
                 value = torch.stack(value, 0)
-            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
+            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb", "weights"}:
                 value = torch.cat(value, 0)
             new_batch[k] = value
         new_batch["batch_idx"] = list(new_batch["batch_idx"])
@@ -482,7 +485,7 @@ class ClassificationDataset:
         desc = f"{self.prefix}Scanning {self.root}..."
         path = Path(self.root).with_suffix(".cache")  # *.cache file path
 
-        try:
+        with contextlib.suppress(FileNotFoundError, AssertionError, AttributeError):
             cache = load_dataset_cache_file(path)  # attempt to load a *.cache file
             assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
             assert cache["hash"] == get_hash([x[0] for x in self.samples])  # identical hash
@@ -494,25 +497,24 @@ class ClassificationDataset:
                     LOGGER.info("\n".join(cache["msgs"]))  # display warnings
             return samples
 
-        except (FileNotFoundError, AssertionError, AttributeError):
-            # Run scan if *.cache retrieval failed
-            nf, nc, msgs, samples, x = 0, 0, [], [], {}
-            with ThreadPool(NUM_THREADS) as pool:
-                results = pool.imap(func=verify_image, iterable=zip(self.samples, repeat(self.prefix)))
-                pbar = TQDM(results, desc=desc, total=len(self.samples))
-                for sample, nf_f, nc_f, msg in pbar:
-                    if nf_f:
-                        samples.append(sample)
-                    if msg:
-                        msgs.append(msg)
-                    nf += nf_f
-                    nc += nc_f
-                    pbar.desc = f"{desc} {nf} images, {nc} corrupt"
-                pbar.close()
-            if msgs:
-                LOGGER.info("\n".join(msgs))
-            x["hash"] = get_hash([x[0] for x in self.samples])
-            x["results"] = nf, nc, len(samples), samples
-            x["msgs"] = msgs  # warnings
-            save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
-            return samples
+        # Run scan if *.cache retrieval failed
+        nf, nc, msgs, samples, x = 0, 0, [], [], {}
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(func=verify_image, iterable=zip(self.samples, repeat(self.prefix)))
+            pbar = TQDM(results, desc=desc, total=len(self.samples))
+            for sample, nf_f, nc_f, msg in pbar:
+                if nf_f:
+                    samples.append(sample)
+                if msg:
+                    msgs.append(msg)
+                nf += nf_f
+                nc += nc_f
+                pbar.desc = f"{desc} {nf} images, {nc} corrupt"
+            pbar.close()
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        x["hash"] = get_hash([x[0] for x in self.samples])
+        x["results"] = nf, nc, len(samples), samples
+        x["msgs"] = msgs  # warnings
+        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return samples

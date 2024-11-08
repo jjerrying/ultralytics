@@ -1,5 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
+import contextlib
 import hashlib
 import json
 import os
@@ -35,7 +36,7 @@ from ultralytics.utils.downloads import download, safe_download, unzip_file
 from ultralytics.utils.ops import segments2boxes
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
-IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm", "heic"}  # image suffixes
+IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm"}  # image suffixes
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # video suffixes
 PIN_MEMORY = str(os.getenv("PIN_MEMORY", True)).lower() == "true"  # global pin_memory for dataloaders
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
@@ -59,14 +60,12 @@ def exif_size(img: Image.Image):
     """Returns exif-corrected PIL size."""
     s = img.size  # (width, height)
     if img.format == "JPEG":  # only support JPEG images
-        try:
+        with contextlib.suppress(Exception):
             exif = img.getexif()
             if exif:
                 rotation = exif.get(274, None)  # the EXIF key for the orientation tag is 274
                 if rotation in {6, 8}:  # rotation 270 or 90
                     s = s[1], s[0]
-        except Exception:
-            pass
     return s
 
 
@@ -122,16 +121,18 @@ def verify_image_label(args):
                 lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
                 if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
                     classes = np.array([x[0] for x in lb], dtype=np.float32)
-                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
-                    lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                    segments = [np.array(x[1:9], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                    weights = np.array([x[9] for x in lb], dtype=np.float32)
+                    lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments), weights.reshape(-1, 1)), 1)  # (cls, xywh)
                 lb = np.array(lb, dtype=np.float32)
+            # lb's shape: (n_box, 1 + 4 + number of ingredient classes) 
             nl = len(lb)
             if nl:
                 if keypoint:
                     assert lb.shape[1] == (5 + nkpt * ndim), f"labels require {(5 + nkpt * ndim)} columns each"
                     points = lb[:, 5:].reshape(-1, ndim)[:, :2]
                 else:
-                    assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
+                    # assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
                     points = lb[:, 1:]
                 # assert points.max() <= 1, f"non-normalized or out of bounds coordinates {points[points > 1]}"
                 # assert lb.min() >= 0, f"negative label values {lb[lb < 0]}"
@@ -159,7 +160,7 @@ def verify_image_label(args):
             if ndim == 2:
                 kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
-        lb = lb[:, :5]
+        # lb = lb[:, :5]
         return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
     except Exception as e:
         nc = 1
@@ -217,7 +218,7 @@ def polygons2masks_overlap(imgsz, segments, downsample_ratio=1):
     ms = []
     for si in range(len(segments)):
         mask = polygon2mask(imgsz, [segments[si].reshape(-1)], downsample_ratio=downsample_ratio, color=1)
-        ms.append(mask.astype(masks.dtype))
+        ms.append(mask)
         areas.append(mask.sum())
     areas = np.asarray(areas)
     index = np.argsort(-areas)
@@ -453,12 +454,12 @@ class HUBDatasetStats:
         path = Path(path).resolve()
         LOGGER.info(f"Starting HUB dataset checks for {path}....")
 
-        self.task = task  # detect, segment, pose, classify, obb
+        self.task = task  # detect, segment, pose, classify
         if self.task == "classify":
             unzip_dir = unzip_file(path)
             data = check_cls_dataset(unzip_dir)
             data["path"] = unzip_dir
-        else:  # detect, segment, pose, obb
+        else:  # detect, segment, pose
             _, data_dir, yaml_path = self._unzip(Path(path))
             try:
                 # Load YAML with checks

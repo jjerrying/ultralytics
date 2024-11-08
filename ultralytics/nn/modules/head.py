@@ -19,7 +19,7 @@ __all__ = "Detect", "Segment", "Pose", "Classify", "OBB", "RTDETRDecoder", "v10D
 
 
 class Detect(nn.Module):
-    """YOLO Detect head for detection models."""
+    """YOLOv8 Detect head for detection models."""
 
     dynamic = False  # force grid reconstruction
     export = False  # export mode
@@ -28,10 +28,9 @@ class Detect(nn.Module):
     shape = None
     anchors = torch.empty(0)  # init
     strides = torch.empty(0)  # init
-    legacy = False  # backward compatibility for v3/v5/v8/v9 models
 
     def __init__(self, nc=80, ch=()):
-        """Initializes the YOLO detection layer with specified number of classes and channels."""
+        """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__()
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
@@ -42,17 +41,13 @@ class Detect(nn.Module):
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
         )
-        self.cv3 = (
-            nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
-            if self.legacy
-            else nn.ModuleList(
-                nn.Sequential(
-                    nn.Sequential(DWConv(x, x, 3), Conv(x, c3, 1)),
-                    nn.Sequential(DWConv(c3, c3, 3), Conv(c3, c3, 1)),
-                    nn.Conv2d(c3, self.nc, 1),
-                )
-                for x in ch
+        self.cv3 = nn.ModuleList(
+            nn.Sequential(
+                nn.Sequential(DWConv(x, x, 3), Conv(x, c3, 1)),
+                nn.Sequential(DWConv(c3, c3, 3), Conv(c3, c3, 1)),
+                nn.Conv2d(c3, self.nc, 1),
             )
+            for x in ch
         )
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
@@ -167,7 +162,7 @@ class Detect(nn.Module):
 
 
 class Segment(Detect):
-    """YOLO Segment head for segmentation models."""
+    """YOLOv8 Segment head for segmentation models."""
 
     def __init__(self, nc=80, nm=32, npr=256, ch=()):
         """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers."""
@@ -192,15 +187,17 @@ class Segment(Detect):
 
 
 class OBB(Detect):
-    """YOLO OBB detection head for detection with rotation models."""
+    """YOLOv8 OBB detection head for detection with rotation models."""
 
-    def __init__(self, nc=80, ne=1, ch=()):
+    def __init__(self, nc=80, ne=1, nci=0, ch=()):
         """Initialize OBB with number of classes `nc` and layer channels `ch`."""
         super().__init__(nc, ch)
         self.ne = ne  # number of extra parameters
 
         c4 = max(ch[0] // 4, self.ne)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.ne, 1)) for x in ch)
+        self.cv5 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, nci, 1)) for x in ch)
+        # self.cv6 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, nci, 1)) for x in ch)
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
@@ -209,12 +206,18 @@ class OBB(Detect):
         # NOTE: set `angle` as an attribute so that `decode_bboxes` could use it.
         angle = (angle.sigmoid() - 0.25) * math.pi  # [-pi/4, 3pi/4]
         # angle = angle.sigmoid() * math.pi / 2  # [0, pi/2]
+
+        # # Ingredient
+        ing_possibility = torch.cat([self.cv5[i](x[i]).view(bs, self.ne, -1) for i in range(self.nl)], 2)
+        ing_possibility = ing_possibility.relu()
+        # ing_weight = torch.cat([self.cv6[i](x[i]).view(bs, self.ne, -1) for i in range(self.nl)], 2)
+
         if not self.training:
             self.angle = angle
         x = Detect.forward(self, x)
         if self.training:
-            return x, angle
-        return torch.cat([x, angle], 1) if self.export else (torch.cat([x[0], angle], 1), (x[1], angle))
+            return x, angle, ing_possibility#, ing_weight
+        return torch.cat([x, angle], 1) if self.export else (torch.cat([x[0], angle, ing_possibility], 1), (x[1], angle, ing_possibility))#, ing_weight))
 
     def decode_bboxes(self, bboxes, anchors):
         """Decode rotated bounding boxes."""
@@ -222,7 +225,7 @@ class OBB(Detect):
 
 
 class Pose(Detect):
-    """YOLO Pose head for keypoints models."""
+    """YOLOv8 Pose head for keypoints models."""
 
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
         """Initialize YOLO network with default parameters and Convolutional Layers."""
@@ -246,21 +249,9 @@ class Pose(Detect):
     def kpts_decode(self, bs, kpts):
         """Decodes keypoints."""
         ndim = self.kpt_shape[1]
-        if self.export:
-            if self.format in {
-                "tflite",
-                "edgetpu",
-            }:  # required for TFLite export to avoid 'PLACEHOLDER_FOR_GREATER_OP_CODES' bug
-                # Precompute normalization factor to increase numerical stability
-                y = kpts.view(bs, *self.kpt_shape, -1)
-                grid_h, grid_w = self.shape[2], self.shape[3]
-                grid_size = torch.tensor([grid_w, grid_h], device=y.device).reshape(1, 2, 1)
-                norm = self.strides / (self.stride[0] * grid_size)
-                a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * norm
-            else:
-                # NCNN fix
-                y = kpts.view(bs, *self.kpt_shape, -1)
-                a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
+        if self.export:  # required for TFLite export to avoid 'PLACEHOLDER_FOR_GREATER_OP_CODES' bug
+            y = kpts.view(bs, *self.kpt_shape, -1)
+            a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
             if ndim == 3:
                 a = torch.cat((a, y[:, :, 2:3].sigmoid()), 2)
             return a.view(bs, self.nk, -1)
@@ -274,10 +265,10 @@ class Pose(Detect):
 
 
 class Classify(nn.Module):
-    """YOLO classification head, i.e. x(b,c1,20,20) to x(b,c2)."""
+    """YOLOv8 classification head, i.e. x(b,c1,20,20) to x(b,c2)."""
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1):
-        """Initializes YOLO classification head to transform input tensor from (b,c1,20,20) to (b,c2) shape."""
+        """Initializes YOLOv8 classification head to transform input tensor from (b,c1,20,20) to (b,c2) shape."""
         super().__init__()
         c_ = 1280  # efficientnet_b0 size
         self.conv = Conv(c1, c_, k, s, p, g)
@@ -294,10 +285,10 @@ class Classify(nn.Module):
 
 
 class WorldDetect(Detect):
-    """Head for integrating YOLO detection models with semantic understanding from text embeddings."""
+    """Head for integrating YOLOv8 detection models with semantic understanding from text embeddings."""
 
     def __init__(self, nc=80, embed=512, with_bn=False, ch=()):
-        """Initialize YOLO detection layer with nc classes and layer channels ch."""
+        """Initialize YOLOv8 detection layer with nc classes and layer channels ch."""
         super().__init__(nc, ch)
         c3 = max(ch[0], min(self.nc, 100))
         self.cv3 = nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, embed, 1)) for x in ch)

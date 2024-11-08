@@ -36,6 +36,7 @@ class OBBPredictor(DetectionPredictor):
             agnostic=self.args.agnostic_nms,
             max_det=self.args.max_det,
             nc=len(self.model.names),
+            nci=1,
             classes=self.args.classes,
             rotated=True,
         )
@@ -45,9 +46,9 @@ class OBBPredictor(DetectionPredictor):
 
         results = []
         for pred, orig_img, img_path in zip(preds, orig_imgs, self.batch[0]):
-            rboxes = ops.regularize_rboxes(torch.cat([pred[:, :4], pred[:, -1:]], dim=-1))
+            rboxes = ops.regularize_rboxes(torch.cat([pred[:, :4], pred[:, -2:-1]], dim=-1))
             rboxes[:, :4] = ops.scale_boxes(img.shape[2:], rboxes[:, :4], orig_img.shape, xywh=True)
             # xywh, r, conf, cls
-            obb = torch.cat([rboxes, pred[:, 4:6]], dim=-1)
+            obb = torch.cat([rboxes, pred[:, 4:-2], pred[:, -1:]], dim=-1)
             results.append(Results(orig_img, path=img_path, names=self.model.names, obb=obb))
         return results

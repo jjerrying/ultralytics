@@ -680,7 +680,7 @@ class Mosaic(BaseMixTransform):
         """
         mosaic_labels = []
         s = self.imgsz
-        yc, xc = s, s #(int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
+        yc, xc = s, s#(int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
         for i in range(4):
             labels_patch = labels if i == 0 else labels["mix_labels"][i - 1]
             # Load image
@@ -1237,13 +1237,13 @@ class RandomPerspective:
             >>> result = transform(labels)
             >>> assert result["img"].shape[:2] == result["resized_shape"]
         """
-        candidate_index = None
         if self.pre_transform and "mosaic_border" not in labels:
             labels = self.pre_transform(labels)
         labels.pop("ratio_pad", None)  # do not need ratio pad
 
         img = labels["img"]
         cls = labels["cls"]
+        # print(labels)
         instances = labels.pop("instances")
         # Make sure the coord formats are right
         instances.convert_bbox(format="xyxy")
@@ -1259,24 +1259,30 @@ class RandomPerspective:
 
         segments = instances.segments
         keypoints = instances.keypoints
+        weights = instances.weights
+        # print(weights)
         # Update bboxes if there are segments.
         if len(segments):
             bboxes, segments, candidate_index = self.apply_segments(segments, M)
 
         if keypoints is not None:
             keypoints = self.apply_keypoints(keypoints, M)
-        new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
+        new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False, weights=weights)
         # Clip
         tmp_segments = deepcopy(new_instances.segments)
         min_max_points = np.concatenate([tmp_segments.min(axis=(1)), tmp_segments.max(axis=(1))], axis=-1)
         new_instances.clip(*self.size)
+        # with open('01_af_clip.pickle', 'wb') as f:
+        #     pickle.dump(new_instances, f)
+        # Point filtering
         not_equal_indices = ~np.all(new_instances.segments == tmp_segments, axis=-1)
         sampled_indices = (~not_equal_indices).argmax(axis=-1)
         row_indices = np.arange(new_instances.segments.shape[0])[:, np.newaxis]
         sampled_values = new_instances.segments[row_indices, sampled_indices[:, np.newaxis], :]
         sampled_values = self.check_quadrant(min_max_points, sampled_values)
         new_instances.segments = np.where(~not_equal_indices[:, :, np.newaxis], new_instances.segments, sampled_values)
-        
+        # new_instances.clip(*self.size)
+
         # Filter instances
         instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
         # Make the bboxes have the same scale with new_bboxes
@@ -2097,6 +2103,8 @@ class Format:
         # Then we can use collate_fn
         if self.batch_idx:
             labels["batch_idx"] = torch.zeros(nl)
+        
+        labels["weights"] = torch.from_numpy(instances.weights)
         return labels
 
     def _format_img(self, img):

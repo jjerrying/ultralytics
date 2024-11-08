@@ -1,5 +1,5 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
-
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -77,7 +77,18 @@ class TaskAlignedAssigner(nn.Module):
 
         # Assigned target
         target_labels, target_bboxes, target_scores = self.get_targets(gt_labels, gt_bboxes, target_gt_idx, fg_mask)
-
+        # np.savez("assign_targets.npz",
+        #          bs = self.bs, 
+        #          n_max_boxes=self.n_max_boxes,
+        #          num_classes=self.num_classes,
+        #          gt_labels=gt_labels.cpu().numpy(), 
+        #          gt_bboxes=gt_bboxes.cpu().numpy(),
+        #          target_labels=target_labels.detach().cpu().numpy(),
+        #          target_bboxes=target_bboxes.detach().cpu().numpy(),
+        #          target_scores=target_scores.detach().cpu().numpy(),
+        #          target_gt_idx=target_gt_idx.cpu().numpy(),
+        #          fg_mask=fg_mask.cpu().numpy()
+        # )
         # Normalize
         align_metric *= mask_pos
         pos_align_metrics = align_metric.amax(dim=-1, keepdim=True)  # b, max_num_obj

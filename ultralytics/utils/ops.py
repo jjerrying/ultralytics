@@ -170,6 +170,7 @@ def non_max_suppression(
     labels=(),
     max_det=300,
     nc=0,  # number of classes (optional)
+    nci=0, # number of weight classes (optional)
     max_time_img=0.05,
     max_nms=30000,
     max_wh=7680,
@@ -226,7 +227,7 @@ def non_max_suppression(
     bs = prediction.shape[0]  # batch size (BCN, i.e. 1,84,6300)
     nc = nc or (prediction.shape[1] - 4)  # number of classes
     nm = prediction.shape[1] - nc - 4  # number of masks
-    mi = 4 + nc  # mask start index
+    mi = 4 + nc + nci  # mask start index
     xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates
 
     # Settings

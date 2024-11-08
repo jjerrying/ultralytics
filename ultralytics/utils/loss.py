@@ -1,5 +1,5 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,7 +123,7 @@ class RotatedBboxLoss(BboxLoss):
     def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask):
         """IoU loss."""
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
-        iou = probiou(pred_bboxes[fg_mask], target_bboxes[fg_mask])
+        iou = probiou(pred_bboxes[fg_mask], target_bboxes[fg_mask], CIoU=True)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
 
         # DFL loss
@@ -164,6 +164,7 @@ class v8DetectionLoss:
 
         m = model.model[-1]  # Detect() module
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
+        self.mse = nn.SmoothL1Loss(reduction="none")
         self.hyp = h
         self.stride = m.stride  # model strides
         self.nc = m.nc  # number of classes
@@ -639,8 +640,8 @@ class v8OBBLoss(v8DetectionLoss):
 
     def __call__(self, preds, batch):
         """Calculate and return the loss for the YOLO model."""
-        loss = torch.zeros(3, device=self.device)  # box, cls, dfl
-        feats, pred_angle = preds if isinstance(preds[0], list) else preds[1]
+        loss = torch.zeros(4, device=self.device)  # box, cls, dfl, weight, 
+        feats, pred_angle, pred_ing_weight = preds if isinstance(preds[0], list) else preds[1]
         batch_size = pred_angle.shape[0]  # batch size, number of masks, mask height, mask width
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -693,7 +694,6 @@ class v8OBBLoss(v8DetectionLoss):
         # Cls loss
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
         loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
-
         # Bbox loss
         if fg_mask.sum():
             target_bboxes[..., :4] /= stride_tensor
@@ -703,10 +703,30 @@ class v8OBBLoss(v8DetectionLoss):
         else:
             loss[0] += (pred_angle * 0).sum()
 
+        # np.savez("target_bboxes.npz", 
+        #             im_file=batch["im_file"],
+        #             batch=batch["img"].detach().cpu().numpy(),
+        #             labels=target_labels.detach().cpu().numpy(), 
+        #             bboxes=target_bboxes.detach().cpu().numpy(), 
+        #             scores=target_scores.detach().cpu().numpy(),
+        #             mask=fg_mask.detach().cpu().numpy(),
+        #             target_gt_idx=target_gt_idx.detach().cpu().numpy() ,
+        #             target_weight = batch["weights"].cpu().numpy()
+        #             )
+        
+        # Ingredient loss
+        # pred_ing_prob, pred_ing_weight
+        
+        # target_ing_weight = batch["weights"]
+        # target_ing_prop = fg_mask
+        target_ing_weight = (fg_mask.to(self.device) * batch["weights"].to(self.device)).unsqueeze(1)
+        
+        loss[3] = self.mse(pred_ing_weight, target_ing_weight.to(dtype)).sum() / target_scores_sum  # BCE
+
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
-
+        loss[3] *= 1.0
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
     def bbox_decode(self, anchor_points, pred_dist, pred_angle):

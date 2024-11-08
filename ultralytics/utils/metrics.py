@@ -345,9 +345,9 @@ class ConfusionMatrix:
         detections = detections[detections[:, 4] > self.conf]
         gt_classes = gt_cls.int()
         detection_classes = detections[:, 5].int()
-        is_obb = detections.shape[1] == 7 and gt_bboxes.shape[1] == 5  # with additional `angle` dimension
+        is_obb = detections.shape[1] >= 7 and gt_bboxes.shape[1] == 5  # with additional `angle` dimension
         iou = (
-            batch_probiou(gt_bboxes, torch.cat([detections[:, :4], detections[:, -1:]], dim=-1))
+            batch_probiou(gt_bboxes, torch.cat([detections[:, :4], detections[:, 6:7]], dim=-1))
             if is_obb
             else box_iou(gt_bboxes, detections[:, :4])
         )
@@ -598,7 +598,7 @@ def ap_per_class(
         # AP from recall-precision curve
         for j in range(tp.shape[1]):
             ap[ci, j], mpre, mrec = compute_ap(recall[:, j], precision[:, j])
-            if j == 0:
+            if plot and j == 0:
                 prec_values.append(np.interp(x, mrec, mpre))  # precision at mAP@0.5
 
     prec_values = np.array(prec_values)  # (nc, 1000)
