@@ -1,6 +1,5 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
-import contextlib
 import json
 from collections import defaultdict
 from itertools import repeat
@@ -296,7 +295,7 @@ class GroundingDataset(YOLODataset):
         """Loads annotations from a JSON file, filters, and normalizes bounding boxes for each image."""
         labels = []
         LOGGER.info("Loading annotation file...")
-        with open(self.json_file, "r") as f:
+        with open(self.json_file) as f:
             annotations = json.load(f)
         images = {f'{x["id"]:d}': x for x in annotations["images"]}
         img_to_anns = defaultdict(list)
@@ -431,6 +430,12 @@ class ClassificationDataset:
             self.samples = self.samples[: round(len(self.samples) * args.fraction)]
         self.prefix = colorstr(f"{prefix}: ") if prefix else ""
         self.cache_ram = args.cache is True or str(args.cache).lower() == "ram"  # cache images into RAM
+        if self.cache_ram:
+            LOGGER.warning(
+                "WARNING ⚠️ Classification `cache_ram` training has known memory leak in "
+                "https://github.com/ultralytics/ultralytics/issues/9824, setting `cache_ram=False`."
+            )
+            self.cache_ram = False
         self.cache_disk = str(args.cache).lower() == "disk"  # cache images on hard drive as uncompressed *.npy files
         self.samples = self.verify_images()  # filter out bad images
         self.samples = [list(x) + [Path(x[0]).with_suffix(".npy"), None] for x in self.samples]  # file, index, npy, im
@@ -477,7 +482,7 @@ class ClassificationDataset:
         desc = f"{self.prefix}Scanning {self.root}..."
         path = Path(self.root).with_suffix(".cache")  # *.cache file path
 
-        with contextlib.suppress(FileNotFoundError, AssertionError, AttributeError):
+        try:
             cache = load_dataset_cache_file(path)  # attempt to load a *.cache file
             assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
             assert cache["hash"] == get_hash([x[0] for x in self.samples])  # identical hash
@@ -489,24 +494,25 @@ class ClassificationDataset:
                     LOGGER.info("\n".join(cache["msgs"]))  # display warnings
             return samples
 
-        # Run scan if *.cache retrieval failed
-        nf, nc, msgs, samples, x = 0, 0, [], [], {}
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(func=verify_image, iterable=zip(self.samples, repeat(self.prefix)))
-            pbar = TQDM(results, desc=desc, total=len(self.samples))
-            for sample, nf_f, nc_f, msg in pbar:
-                if nf_f:
-                    samples.append(sample)
-                if msg:
-                    msgs.append(msg)
-                nf += nf_f
-                nc += nc_f
-                pbar.desc = f"{desc} {nf} images, {nc} corrupt"
-            pbar.close()
-        if msgs:
-            LOGGER.info("\n".join(msgs))
-        x["hash"] = get_hash([x[0] for x in self.samples])
-        x["results"] = nf, nc, len(samples), samples
-        x["msgs"] = msgs  # warnings
-        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
-        return samples
+        except (FileNotFoundError, AssertionError, AttributeError):
+            # Run scan if *.cache retrieval failed
+            nf, nc, msgs, samples, x = 0, 0, [], [], {}
+            with ThreadPool(NUM_THREADS) as pool:
+                results = pool.imap(func=verify_image, iterable=zip(self.samples, repeat(self.prefix)))
+                pbar = TQDM(results, desc=desc, total=len(self.samples))
+                for sample, nf_f, nc_f, msg in pbar:
+                    if nf_f:
+                        samples.append(sample)
+                    if msg:
+                        msgs.append(msg)
+                    nf += nf_f
+                    nc += nc_f
+                    pbar.desc = f"{desc} {nf} images, {nc} corrupt"
+                pbar.close()
+            if msgs:
+                LOGGER.info("\n".join(msgs))
+            x["hash"] = get_hash([x[0] for x in self.samples])
+            x["results"] = nf, nc, len(samples), samples
+            x["msgs"] = msgs  # warnings
+            save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+            return samples
