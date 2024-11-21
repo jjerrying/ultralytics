@@ -250,6 +250,7 @@ class DetectionValidator(BaseValidator):
             batch["batch_idx"],
             batch["cls"].squeeze(-1),
             batch["bboxes"],
+            weights=batch["weights"] if "weights" in batch else None,
             paths=batch["im_file"],
             fname=self.save_dir / f"val_batch{ni}_labels.jpg",
             names=self.names,

@@ -102,9 +102,11 @@ class OBBValidator(DetectionValidator):
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""
+        tmp = output_to_rotated_target(preds, max_det=self.args.max_det) # pred: 300 x 8 (x, y, w, h, conf, cls, angle, weight )
+        tmp[-1] *= self.args.wei_norm
         plot_images(
             batch["img"],
-            *output_to_rotated_target(preds, max_det=self.args.max_det),
+            *tmp,
             paths=batch["im_file"],
             fname=self.save_dir / f"val_batch{ni}_pred.jpg",
             names=self.names,

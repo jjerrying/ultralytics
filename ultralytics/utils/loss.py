@@ -164,7 +164,7 @@ class v8DetectionLoss:
 
         m = model.model[-1]  # Detect() module
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
-        self.mse = nn.SmoothL1Loss(reduction="none")
+        self.reg = nn.SmoothL1Loss(reduction="none")
         self.hyp = h
         self.stride = m.stride  # model strides
         self.nc = m.nc  # number of classes
@@ -719,14 +719,14 @@ class v8OBBLoss(v8DetectionLoss):
         
         # target_ing_weight = batch["weights"]
         # target_ing_prop = fg_mask
-        target_ing_weight = (fg_mask.to(self.device) * batch["weights"].to(self.device)).unsqueeze(1)
-        
-        loss[3] = self.mse(pred_ing_weight, target_ing_weight.to(dtype)).sum() / target_scores_sum  # BCE
+        target_ing_weight = (fg_mask.to(self.device) * batch["weights"].to(self.device)).unsqueeze(1).to(dtype) / self.hyp.wei_norm
+        tmp = self.reg(pred_ing_weight, target_ing_weight)
+        loss[3] = tmp.sum() # relative error
 
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
-        loss[3] *= 1.0
+        loss[3] *= self.hyp.wei
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
     def bbox_decode(self, anchor_points, pred_dist, pred_angle):

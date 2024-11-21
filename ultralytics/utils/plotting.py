@@ -992,6 +992,7 @@ def plot_images(
     cls: Union[torch.Tensor, np.ndarray],
     bboxes: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.float32),
     confs: Optional[Union[torch.Tensor, np.ndarray]] = None,
+    weights: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.float32),
     masks: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.uint8),
     kpts: Union[torch.Tensor, np.ndarray] = np.zeros((0, 51), dtype=np.float32),
     paths: Optional[List[str]] = None,
@@ -1036,6 +1037,8 @@ def plot_images(
         cls = cls.cpu().numpy()
     if isinstance(bboxes, torch.Tensor):
         bboxes = bboxes.cpu().numpy()
+    if isinstance(weights, torch.Tensor):
+        weights = weights.cpu().numpy()
     if isinstance(masks, torch.Tensor):
         masks = masks.cpu().numpy().astype(int)
     if isinstance(kpts, torch.Tensor):
@@ -1093,7 +1096,9 @@ def plot_images(
                     color = colors(c)
                     c = names.get(c, c) if names else c
                     if labels or conf[j] > conf_thres:
-                        label = f"{c}" if labels else f"{c} {conf[j]:.1f}"
+                        label = f"{c}" if labels else f"{c}, {conf[j]:.1f}"
+                        if len(weights):
+                            label += f", {float(weights[idx, 0]):.2f}" if len(weights.shape) != 1 else f", {float(weights[i]):.2f}"
                         annotator.box_label(box, label, color=color, rotated=is_obb)
 
             elif len(classes):
@@ -1319,9 +1324,9 @@ def output_to_rotated_target(output, max_det=300):
     for i, o in enumerate(output):
         box, conf, cls, angle, weight = o[:max_det].cpu().split((4, 1, 1, 1, weight_length), 1)
         j = torch.full((conf.shape[0], 1), i)
-        targets.append(torch.cat((j, cls, box, angle, conf), 1))
+        targets.append(torch.cat((j, cls, box, angle, conf, weight), 1))
     targets = torch.cat(targets, 0).numpy()
-    return targets[:, 0], targets[:, 1], targets[:, 2:-1], targets[:, -1]
+    return [targets[:, 0], targets[:, 1], targets[:, 2:7], targets[:, 7], targets[:, -1]]
 
 
 def feature_visualization(x, module_type, stage, n=32, save_dir=Path("runs/detect/exp")):
