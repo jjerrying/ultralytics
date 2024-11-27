@@ -534,6 +534,7 @@ class BaseTrainer:
         self.last.write_bytes(serialized_ckpt)  # save last.pt
         if self.best_fitness == self.fitness:
             self.best.write_bytes(serialized_ckpt)  # save best.pt
+            LOGGER.info(f"Saving {self.epoch+1}'s model to 'best.pt'...") 
         if (self.save_period > 0) and (self.epoch % self.save_period == 0):
             (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)  # save epoch, i.e. 'epoch3.pt'
         # if self.args.close_mosaic and self.epoch == (self.epochs - self.args.close_mosaic - 1):

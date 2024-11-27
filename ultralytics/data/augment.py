@@ -2094,7 +2094,7 @@ class Format:
                 labels["keypoints"][..., 1] /= h
         if self.return_obb:
             tmp_bboxes = xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
-            tmp_bboxes[:, 2:4] *= 1.02
+            tmp_bboxes[:, 2:4] *= 1.02 # Box 영역 확장
             labels["bboxes"] = (tmp_bboxes)
         # NOTE: need to normalize obb in xywhr format for width-height consistency
         if self.normalize:

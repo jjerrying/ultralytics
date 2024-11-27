@@ -196,7 +196,7 @@ class OBB(Detect):
 
         c4 = max(ch[0] // 4, self.ne)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.ne, 1)) for x in ch)
-        self.cv5 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, nci, 1)) for x in ch)
+        self.cv5 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, nci, 1)) for x in ch)
         # self.cv6 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, nci, 1)) for x in ch)
 
     def forward(self, x):
