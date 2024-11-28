@@ -92,7 +92,7 @@ class DetectionTrainer(BaseTrainer):
 
     def get_validator(self):
         """Returns a DetectionValidator for YOLO model validation."""
-        self.loss_names = "box_loss", "cls_loss", "dfl_loss"
+        self.loss_names = "box_loss", "cls_loss", "dfl_loss", "wei_loss"
         return yolo.detect.DetectionValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
@@ -141,4 +141,5 @@ class DetectionTrainer(BaseTrainer):
         """Create a labeled training plot of the YOLO model."""
         boxes = np.concatenate([lb["bboxes"] for lb in self.train_loader.dataset.labels], 0)
         cls = np.concatenate([lb["cls"] for lb in self.train_loader.dataset.labels], 0)
+        weights = np.concatenate([lb["weights"] for lb in self.train_loader.dataset.labels], 0)
         plot_labels(boxes, cls.squeeze(), names=self.data["names"], save_dir=self.save_dir, on_plot=self.on_plot)
