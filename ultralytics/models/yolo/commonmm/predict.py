@@ -26,7 +26,6 @@ class CommomMMPredictor(DetectionPredictor):
         """Initializes OBBPredictor with optional model and data configuration overrides."""
         super().__init__(cfg, overrides, _callbacks)
         self.args.task = "commonmm"
-
     def postprocess(self, preds, img, orig_imgs):
         """Post-processes predictions and returns a list of Results objects."""
         preds = ops.non_max_suppression(
@@ -38,7 +37,7 @@ class CommomMMPredictor(DetectionPredictor):
             nc=len(self.model.names),
             nci=1,
             classes=self.args.classes,
-            rotated=True,
+            multimodal=True,
         )
 
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list

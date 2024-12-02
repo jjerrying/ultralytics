@@ -47,17 +47,18 @@ class CommomMMValidator(DetectionValidator):
             nci=self.nci,
             agnostic=self.args.single_cls or self.args.agnostic_nms,
             max_det=self.args.max_det,
+            multimodal=True
         )
     
     def output_to_target(self, output, max_det=300):
         """Convert model output to target format [batch_id, class_id, x, y, w, h, conf] for plotting."""
         targets = []
         for i, o in enumerate(output):
-            box, conf, cls, weight = o[:max_det, :6].cpu().split((4, 1, 1, 1), 1)
+            box, conf, cls, weight = o[:max_det].cpu().split((4, 1, 1, self.nci), 1)
             j = torch.full((conf.shape[0], 1), i)
             targets.append(torch.cat((j, cls, ops.xyxy2xywh(box), conf, weight), 1))
         targets = torch.cat(targets, 0).numpy()
-        return [targets[:, 0], targets[:, 1], targets[:, 2:6], targets[:, -1]]
+        return [targets[:, 0], targets[:, 1], targets[:, 2:6], targets[:, 6], targets[:, -1]]
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""

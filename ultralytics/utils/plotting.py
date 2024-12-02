@@ -1152,6 +1152,8 @@ def plot_images(
     if not save:
         return np.asarray(annotator.im)
     annotator.im.save(fname)  # save
+    if "val" in fname.name and "pred" in fname.name:
+        np.savez(f"{fname}.npz", images = images, cls = cls, bboxes = bboxes, weights = weights, batch_idx = batch_idx)
     if on_plot:
         on_plot(fname)
 

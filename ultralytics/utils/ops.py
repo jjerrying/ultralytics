@@ -176,7 +176,7 @@ def non_max_suppression(
     max_wh=7680,
     in_place=True,
     rotated=False,
-    multimodel=False,
+    multimodal=False,
 ):
     """
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
@@ -244,7 +244,7 @@ def non_max_suppression(
             prediction = torch.cat((xywh2xyxy(prediction[..., :4]), prediction[..., 4:]), dim=-1)  # xywh to xyxy
 
     t = time.time()
-    output = [torch.zeros((0, 4 + nc + nm + nci), device=prediction.device)] * bs
+    output = [torch.zeros((0, 6 + nci), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
         # x: [x, y, w, h, cls_conf, class, nci]
         # x: [x, y, w, h, cls_conf, class, ang, nci]
@@ -265,7 +265,8 @@ def non_max_suppression(
             continue
         
         # Detections matrix nx6 (xyxy, conf, cls)
-        if multimodel:
+        if multimodal:
+            mask = None
             box, cls, modal = x.split((4, nc, nci), 1)
         else:
             modal = None
@@ -276,7 +277,7 @@ def non_max_suppression(
             x = torch.cat((box[i], x[i, 4 + j, None], j[:, None].float(), mask[i]), 1)
         else:  # best class only
             conf, j = cls.max(1, keepdim=True)
-            x = torch.cat((box, conf, j.float(), mask), 1)[conf.view(-1) > conf_thres]
+            x = torch.cat((box, conf, j.float(), modal if multimodal else mask), 1)[conf.view(-1) > conf_thres]
 
         # Filter by class
         if classes is not None:
