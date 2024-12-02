@@ -18,6 +18,7 @@ from ultralytics.nn.modules import (
     C3TR,
     ELAN1,
     OBB,
+    CommonMM,
     PSA,
     SPP,
     SPPELAN,
@@ -67,6 +68,7 @@ from ultralytics.utils.loss import (
     E2EDetectLoss,
     v8ClassificationLoss,
     v8DetectionLoss,
+    v8MultiModalLoss,
     v8OBBLoss,
     v8PoseLoss,
     v8SegmentationLoss,
@@ -390,6 +392,13 @@ class DetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
+class CommonMMModel(DetectionModel):
+    def __init__(self, cfg="yolov8n-multimodal.yaml", ch=3, nc=None, nci=None, verbose=True):  # model, input channels, number of classes
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+    
+    def init_criterion(self):
+        """Initialize the loss criterion for the model."""
+        return v8MultiModalLoss(self)
 
 class OBBModel(DetectionModel):
     """YOLOv8 Oriented Bounding Box (OBB) model."""
@@ -1044,7 +1053,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
-        elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
+        elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect, CommonMM}:
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
@@ -1137,6 +1146,8 @@ def guess_model_task(model):
             return "pose"
         if m == "obb":
             return "obb"
+        if m == "commonmm":
+            return "commonmm"
 
     # Guess from model cfg
     if isinstance(model, dict):
@@ -1163,6 +1174,8 @@ def guess_model_task(model):
                 return "obb"
             elif isinstance(m, (Detect, WorldDetect, v10Detect)):
                 return "detect"
+            elif isinstance(m, (CommonMM)):
+                return "commonmm"
 
     # Guess from model filename
     if isinstance(model, (str, Path)):
@@ -1175,6 +1188,8 @@ def guess_model_task(model):
             return "pose"
         elif "-obb" in model.stem or "obb" in model.parts:
             return "obb"
+        elif "-multimodal" in model.stem or "multimodal" in model.parts:
+            return "multimodal"
         elif "detect" in model.parts:
             return "detect"
 

@@ -176,6 +176,7 @@ def non_max_suppression(
     max_wh=7680,
     in_place=True,
     rotated=False,
+    multimodel=False,
 ):
     """
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
@@ -218,7 +219,7 @@ def non_max_suppression(
     if classes is not None:
         classes = torch.tensor(classes, device=prediction.device)
 
-    if prediction.shape[-1] == 6:  # end-to-end model (BNC, i.e. 1,300,6)
+    if not nci and prediction.shape[-1] == 6:  # end-to-end model (BNC, i.e. 1,300,6)
         output = [pred[pred[:, 4] > conf_thres][:max_det] for pred in prediction]
         if classes is not None:
             output = [pred[(pred[:, 5:6] == classes).any(1)] for pred in output]
@@ -227,7 +228,7 @@ def non_max_suppression(
     bs = prediction.shape[0]  # batch size (BCN, i.e. 1,84,6300)
     nc = nc or (prediction.shape[1] - 4)  # number of classes
     nm = prediction.shape[1] - nc - 4  # number of masks
-    mi = 4 + nc + nci  # mask start index
+    mi = 4 + nc  # mask start index
     xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates
 
     # Settings
@@ -243,8 +244,10 @@ def non_max_suppression(
             prediction = torch.cat((xywh2xyxy(prediction[..., :4]), prediction[..., 4:]), dim=-1)  # xywh to xyxy
 
     t = time.time()
-    output = [torch.zeros((0, 6 + nm), device=prediction.device)] * bs
+    output = [torch.zeros((0, 4 + nc + nm + nci), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
+        # x: [x, y, w, h, cls_conf, class, nci]
+        # x: [x, y, w, h, cls_conf, class, ang, nci]
         # Apply constraints
         # x[((x[:, 2:4] < min_wh) | (x[:, 2:4] > max_wh)).any(1), 4] = 0  # width-height
         x = x[xc[xi]]  # confidence
@@ -260,9 +263,13 @@ def non_max_suppression(
         # If none remain process next image
         if not x.shape[0]:
             continue
-
+        
         # Detections matrix nx6 (xyxy, conf, cls)
-        box, cls, mask = x.split((4, nc, nm), 1)
+        if multimodel:
+            box, cls, modal = x.split((4, nc, nci), 1)
+        else:
+            modal = None
+            box, cls, mask = x.split((4, nc, nm), 1)
 
         if multi_label:
             i, j = torch.where(cls > conf_thres)

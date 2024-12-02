@@ -29,11 +29,10 @@ class Detect(nn.Module):
     anchors = torch.empty(0)  # init
     strides = torch.empty(0)  # init
 
-    def __init__(self, nc=80, nci=0, ch=()):
+    def __init__(self, nc=80, ch=()):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__()
         self.nc = nc  # number of classes
-        self.nci = nci
         self.ne = 1
         self.nl = len(ch)  # number of detection layers
         self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
@@ -51,7 +50,7 @@ class Detect(nn.Module):
             )
             for x in ch
         )
-        self.cv4 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, self.nci, 1)) for x in ch)
+
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
         if self.end2end:
@@ -60,20 +59,15 @@ class Detect(nn.Module):
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
-        bs = x[0].shape[0]
         if self.end2end:
             return self.forward_end2end(x)
-        
-        # # Ingredient
-        ing_possibility = torch.cat([self.cv4[i](x[i]).view(bs, self.ne, -1) for i in range(self.nl)], 2)
-        ing_possibility = ing_possibility.relu()
 
         for i in range(self.nl):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
         if self.training:  # Training path
-            return x, ing_possibility
+            return x
         y = self._inference(x)
-        return torch.cat([y, ing_possibility], 1) if self.export else (torch.cat([y, ing_possibility], 1), (x, ing_possibility))
+        return y if self.export else (y, x)
 
     def forward_end2end(self, x):
         """
@@ -194,12 +188,33 @@ class Segment(Detect):
         return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
 
 
+class CommonMM(Detect):
+    """YOLOv8 Multi Modal head for detection with rotation models."""
+    def __init__(self, nc=80, nci=0, ch=()):
+        super().__init__(nc, ch)
+        self.nci=nci
+        self.cv4 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, self.nci, 1)) for x in ch)
+    
+    def forward(self, x):
+        """Concatenates and returns predicted bounding boxes and class probabilities."""
+        bs = x[0].shape[0]  # batch size
+        
+        # # Ingredient
+        ing_possibility = torch.cat([self.cv4[i](x[i]).view(bs, self.nci, -1) for i in range(self.nl)], 2)
+        ing_possibility = ing_possibility.relu()
+
+        x = Detect.forward(self, x)
+        if self.training:
+            return x, ing_possibility
+        return torch.cat([x, ing_possibility], 1) if self.export else (torch.cat([x[0], ing_possibility], 1), (x[1], ing_possibility))
+        
 class OBB(Detect):
     """YOLOv8 OBB detection head for detection with rotation models."""
 
     def __init__(self, nc=80, ne=1, nci=0, ch=()):
         """Initialize OBB with number of classes `nc` and layer channels `ch`."""
         super().__init__(nc, ch)
+        self.nci=nci
         self.ne = ne  # number of extra parameters
 
         c4 = max(ch[0] // 4, self.ne)

@@ -47,13 +47,14 @@ SOLUTION_MAP = {
 
 # Define valid tasks and modes
 MODES = {"train", "val", "predict", "export", "track", "benchmark"}
-TASKS = {"detect", "segment", "classify", "pose", "obb"}
+TASKS = {"detect", "segment", "classify", "pose", "obb", "commonmm"}
 TASK2DATA = {
     "detect": "coco8.yaml",
     "segment": "coco8-seg.yaml",
     "classify": "imagenet10",
     "pose": "coco8-pose.yaml",
     "obb": "dota8.yaml",
+    "commonmm": "food_obb_sample.yaml",
 }
 TASK2MODEL = {
     "detect": "yolo11n.pt",
@@ -61,6 +62,7 @@ TASK2MODEL = {
     "classify": "yolo11n-cls.pt",
     "pose": "yolo11n-pose.pt",
     "obb": "yolo11n-obb.pt",
+    "commonmm": "yolov8-multimodal.pt",
 }
 TASK2METRIC = {
     "detect": "metrics/mAP50-95(B)",
@@ -68,6 +70,7 @@ TASK2METRIC = {
     "classify": "metrics/accuracy_top1",
     "pose": "metrics/mAP50-95(P)",
     "obb": "metrics/mAP50-95(B)",
+    "commonmm": "metrics/mAP50-95(B)",
 }
 MODELS = {TASK2MODEL[task] for task in TASKS}
 
