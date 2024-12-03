@@ -196,8 +196,31 @@ class OBB(Detect):
 
         c4 = max(ch[0] // 4, self.ne)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.ne, 1)) for x in ch)
+
+    def forward(self, x):
+        """Concatenates and returns predicted bounding boxes and class probabilities."""
+        bs = x[0].shape[0]  # batch size
+        angle = torch.cat([self.cv4[i](x[i]).view(bs, self.ne, -1) for i in range(self.nl)], 2)  # OBB theta logits
+        # NOTE: set `angle` as an attribute so that `decode_bboxes` could use it.
+        angle = (angle.sigmoid() - 0.25) * math.pi  # [-pi/4, 3pi/4]
+        # angle = angle.sigmoid() * math.pi / 2  # [0, pi/2]
+
+        if not self.training:
+            self.angle = angle
+        x = Detect.forward(self, x)
+        if self.training:
+            return x, angle
+        return torch.cat([x, angle], 1) if self.export else (torch.cat([x[0], angle], 1), (x[1], angle))#, ing_weight))
+
+    def decode_bboxes(self, bboxes, anchors):
+        """Decode rotated bounding boxes."""
+        return dist2rbox(bboxes, self.angle, anchors, dim=1)
+
+class OBBMM(OBB):
+    def __init__(self, nc=80, ne=1, nci=0, ch=()):
+        """Initialize OBB with number of classes `nc` and layer channels `ch`."""
+        super().__init__(nc, ne, nci, ch)
         self.cv5 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, nci, 1)) for x in ch)
-        # self.cv6 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, nci, 1)) for x in ch)
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
@@ -219,9 +242,6 @@ class OBB(Detect):
             return x, angle, ing_possibility#, ing_weight
         return torch.cat([x, angle], 1) if self.export else (torch.cat([x[0], angle, ing_possibility], 1), (x[1], angle, ing_possibility))#, ing_weight))
 
-    def decode_bboxes(self, bboxes, anchors):
-        """Decode rotated bounding boxes."""
-        return dist2rbox(bboxes, self.angle, anchors, dim=1)
 
 
 class Pose(Detect):
